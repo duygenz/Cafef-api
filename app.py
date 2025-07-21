@@ -1,61 +1,41 @@
-from flask import Flask, jsonify
-from flask_cors import CORS  # Import thư viện CORS
 import requests
-from bs4 import BeautifulSoup
+import xmltodict
+from flask import Flask, jsonify
+from flask_cors import CORS
 
 # Khởi tạo ứng dụng Flask
 app = Flask(__name__)
-# Kích hoạt CORS cho tất cả các route trong ứng dụng
+# Kích hoạt CORS cho tất cả các route
 CORS(app)
 
-def get_cafef_news():
-    """
-    Hàm này thực hiện scraping tin tức từ trang CafeF.
-    """
-    url = "https://m.cafef.vn/thi-truong-chung-khoan.chn"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Linux; Android 10; SM-G975F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.106 Mobile Safari/537.36"
-    }
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()  # Báo lỗi nếu request không thành công
+# URL của RSS feed từ CafeF
+RSS_URL = 'https://cafef.vn/thi-truong-chung-khoan.rss'
 
-        soup = BeautifulSoup(response.content, 'html.parser')
-        news_list = []
+@app.route("/")
+def home():
+    # Route mặc định để kiểm tra xem server có hoạt động không
+    return "Chào mừng bạn đến với API tin tức CafeF!"
+
+@app.route("/api/news")
+def get_news():
+    try:
+        # Gửi yêu cầu đến URL của RSS feed
+        response = requests.get(RSS_URL)
+        response.raise_for_status()  # Báo lỗi nếu yêu cầu không thành công
+
+        # Dùng xmltodict để chuyển đổi dữ liệu XML sang Dictionary của Python
+        data_dict = xmltodict.parse(response.content)
         
-        # Selector đã được kiểm tra để lấy đúng các bài viết
-        articles = soup.select('ul.post-listing li a')
+        # Lấy danh sách các bài viết
+        news_items = data_dict.get('rss', {}).get('channel', {}).get('item', [])
         
-        for article in articles:
-            title = article.get('title')
-            link = article.get('href')
-            
-            if title and link:
-                # Đảm bảo link là một URL đầy đủ
-                if not link.startswith('http'):
-                    link = "https://m.cafef.vn" + link
-                
-                news_list.append({"title": title, "link": link})
-                
-        return news_list
+        # Trả về dữ liệu dưới dạng JSON
+        return jsonify(news_items)
 
     except requests.exceptions.RequestException as e:
-        print(f"Lỗi khi request đến CafeF: {e}")
-        return None
+        return jsonify({"error": f"Lỗi khi lấy dữ liệu: {e}"}), 500
+    except Exception as e:
+        return jsonify({"error": f"Lỗi xử lý dữ liệu: {e}"}), 500
 
-@app.route('/api/news', methods=['GET'])
-def get_news_api():
-    """
-    Đây là endpoint API của bạn.
-    """
-    news_data = get_cafef_news()
-    if news_data:
-        return jsonify(news_data)
-    else:
-        return jsonify({"error": "Không thể lấy được dữ liệu tin tức từ CafeF."}), 500
-
-# Dòng này để Render biết cách chạy ứng dụng
-if __name__ == '__main__':
-    # Khi chạy trên local, bạn có thể để debug=True
-    # Khi deploy, gunicorn sẽ được sử dụng
-    app.run(host='0.0.0.0', port=8080)
+# Dòng if __name__ == '__main__': không bắt buộc khi triển khai trên Render với Gunicorn
+# nhưng nó hữu ích để chạy thử trên máy tính cá nhân.
