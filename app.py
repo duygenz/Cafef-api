@@ -1,41 +1,80 @@
-import requests
-import xmltodict
 from flask import Flask, jsonify
-from flask_cors import CORS
+import feedparser
+import requests
+from concurrent.futures import ThreadPoolExecutor
 
-# Khởi tạo ứng dụng Flask
 app = Flask(__name__)
-# Kích hoạt CORS cho tất cả các route
-CORS(app)
 
-# URL của RSS feed từ CafeF
-RSS_URL = 'https://cafef.vn/thi-truong-chung-khoan.rss'
+# Danh sách các RSS feed bạn muốn lấy tin tức
+RSS_FEEDS = [
+    "https://vietstock.vn/830/chung-khoan/co-phieu.rss",
+    "https://cafef.vn/thi-truong-chung-khoan.rss",
+    "https://vietstock.vn/145/chung-khoan/y-kien-chuyen-gia.rss",
+    "https://vietstock.vn/737/doanh-nghiep/hoat-dong-kinh-doanh.rss",
+    "https://vietstock.vn/1328/dong-duong/thi-truong-chung-khoan.rss",
+]
 
-@app.route("/")
-def home():
-    # Route mặc định để kiểm tra xem server có hoạt động không
-    return "Chào mừng bạn đến với API tin tức CafeF!"
+# Sử dụng ThreadPoolExecutor để lấy dữ liệu từ nhiều RSS feed song song
+executor = ThreadPoolExecutor(max_workers=5)
 
-@app.route("/api/news")
-def get_news():
+def fetch_feed(url):
+    """
+    Hàm để lấy và phân tích cú pháp một RSS feed.
+    """
     try:
-        # Gửi yêu cầu đến URL của RSS feed
-        response = requests.get(RSS_URL)
-        response.raise_for_status()  # Báo lỗi nếu yêu cầu không thành công
+        # Sử dụng requests để đảm bảo có thể thiết lập user-agent nếu cần
+        # hoặc xử lý các lỗi kết nối tốt hơn.
+        # Tuy nhiên, feedparser thường tự xử lý các URL HTTP/HTTPS.
+        # response = requests.get(url, timeout=10)
+        # feed = feedparser.parse(response.text)
 
-        # Dùng xmltodict để chuyển đổi dữ liệu XML sang Dictionary của Python
-        data_dict = xmltodict.parse(response.content)
-        
-        # Lấy danh sách các bài viết
-        news_items = data_dict.get('rss', {}).get('channel', {}).get('item', [])
-        
-        # Trả về dữ liệu dưới dạng JSON
-        return jsonify(news_items)
+        feed = feedparser.parse(url)
+        news_items = []
+        for entry in feed.entries:
+            title = getattr(entry, 'title', 'No Title')
+            link = getattr(entry, 'link', 'No Link')
+            published = getattr(entry, 'published', getattr(entry, 'updated', 'No Date'))
+            summary = getattr(entry, 'summary', getattr(entry, 'description', 'No Summary'))
 
-    except requests.exceptions.RequestException as e:
-        return jsonify({"error": f"Lỗi khi lấy dữ liệu: {e}"}), 500
+            news_items.append({
+                'title': title,
+                'link': link,
+                'published': published,
+                'summary': summary
+            })
+        return news_items
     except Exception as e:
-        return jsonify({"error": f"Lỗi xử lý dữ liệu: {e}"}), 500
+        print(f"Error fetching {url}: {e}")
+        return []
 
-# Dòng if __name__ == '__main__': không bắt buộc khi triển khai trên Render với Gunicorn
-# nhưng nó hữu ích để chạy thử trên máy tính cá nhân.
+@app.route('/news', methods=['GET'])
+def get_news():
+    """
+    Endpoint để lấy tin tức từ tất cả các RSS feed đã cấu hình.
+    """
+    all_news = []
+    # Lấy dữ liệu từ tất cả các feed song song
+    futures = [executor.submit(fetch_feed, feed_url) for feed_url in RSS_FEEDS]
+    for future in futures:
+        all_news.extend(future.result())
+
+    # Sắp xếp tin tức theo ngày xuất bản (tùy chọn)
+    # Cần một cách chuẩn hóa để so sánh ngày tháng nếu muốn sắp xếp chính xác.
+    # Hiện tại chỉ sắp xếp đơn giản, có thể không hoàn hảo nếu định dạng ngày khác nhau.
+    # all_news.sort(key=lambda x: x['published'], reverse=True)
+
+    return jsonify(all_news)
+
+@app.route('/', methods=['GET'])
+def home():
+    """
+    Trang chủ đơn giản để kiểm tra API đang chạy.
+    """
+    return "API tin tức đang chạy! Truy cập /news để xem tin tức."
+
+if __name__ == '__main__':
+    # Chạy ứng dụng Flask. Trong môi trường production (như Render),
+    # bạn sẽ sử dụng Gunicorn hoặc một WSGI server khác.
+    # Đối với local testing:
+    app.run(debug=True, host='0.0.0.0', port=5000)
+
