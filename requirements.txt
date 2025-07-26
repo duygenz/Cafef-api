@@ -3,3 +3,5 @@ requests
 Flask-Cors
 xmltodict
 gunicorn
+feedparser
+requests
